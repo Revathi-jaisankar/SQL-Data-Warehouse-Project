@@ -1,1 +1,256 @@
+/*
+=================================================================================================
+Stored Procedure: Load Silver Layer(Bronze -> Silver)
+=================================================================================================
+Script Purpose
+  This stored Procedure performs the ETL(Extract, Transform, Load) Process to populate the 'silver schema tables from the bronze schema
+Actions Performed:
+-Truncates Silver tables.
+-Inserts Transformed and cleaned data from bronze into silver table.
+
+Parameters:
+  None
+This stored procedure does not accpet any parameter or return any values
+
+usage Exampple 
+  exec silver.load_silver;
+================================================================================================
+*/
+
+CREATE OR ALTER PROCEDURE silver.load_silver AS
+BEGIN 
+		Declare @start_time DATETIME, @end_Time DATETIME, @batch_start_Time DATETIME, @batch_end_time DATETIME
+		BEGIN TRY
+		SET @batch_start_Time = GETDATE();
+				Print '=============================================================';
+				Print 'Loading Silver Layer';
+				Print '=============================================================';
+
+				Print '-------------------------------------------------------------';
+				Print 'Loading CRM Tables';
+				Print '--------------------------------------------------------------';
+
+				-- bronze.crm_cust_info(Data Transformations) & Insert Into Silver Layer'
+				SET @start_time = GETDATE();
+				Print '>> Truncating Table: silver.crm_cust_info'
+				TRUNCATE TABLE silver.crm_cust_info;
+				PRINT '>> Inserting Data Into: silver.crm_cust_info';
+				INSERT INTO silver.crm_cust_info(
+						cst_id,
+						cst_key,
+						cst_firstname,
+						cst_lastname,
+						cst_marital_status,
+						cst_gndr,
+						cst_create_date
+				) 
+				Select 
+					cst_id,
+					cst_key,
+					Trim(cst_firstname) as cst_firstname, -- To remove the leading & Tailing spaces
+					Trim(cst_lastname) as cst_lastname,
+
+					CASE WHEN upper(Trim(cst_marital_status)) = 'M' THEN 'Married'
+						 WHEN upper(Trim(cst_marital_status)) = 'S' THEN 'Single'
+						 ELSE 'N/A'
+					END cst_marital_status, --To stardardize the data
+
+					CASE WHEN upper(Trim(cst_gndr)) = 'M' THEN 'MALE'
+						 WHEN upper(Trim(cst_gndr)) = 'F' THEN 'FEMALE'
+							 ELSE 'N/A'
+					END cst_gndr, --To stardardize the data
+					cst_create_date
+				From (
+				Select 
+				*,
+				Row_Number() Over(Partition by cst_id Order by cst_create_date desc) as flag_last
+				From bronze.crm_cust_info
+				) t where flag_last = 1 and cst_id IS NOT NULL ---- To remove the duplicates & null in Pk and keep only unique pk (flag_last=1)
+				SET @end_time = GETDATE();
+				Print '>> Load Duration: ' + Cast(DATEDIFF (Second, @start_time, @end_time) AS NVARCHAR) + ' seconds';
+				Print '-----------------';
+
+
+				-- bronze.crm_cust_info(Data Transformations)  & Insert Into Silver Layer'
+				SET @start_time = GETDATE();
+				Print '>> Truncating Table: silver.crm_prd_info'
+				TRUNCATE TABLE silver.crm_prd_info;
+				PRINT '>> Inserting Data Into: silver.crm_prd_info';
+				Insert Into silver.crm_prd_info (
+					prd_id,
+					cat_id,
+					prd_key,
+					prd_nm,
+					prd_cost,
+					prd_line,
+					prd_start_dt,
+					prd_end_dt
+				) -- After cleaned the all cloumn data issue in bronze layer now we upload into silver layer
+				Select
+					prd_id,
+					Replace(SUBSTRING(prd_key,1,5), '-','_') as cat_id, -- Extract category ID
+					SUBSTRING(prd_key,7,LEN(prd_key)) as prd_key, -- Extract Product key
+					prd_nm,
+					ISNULL(prd_cost, 0) as prd_cost,
+					Case Upper(Trim(prd_line))
+						When 'M' then 'Mountain'
+						When 'R' then 'Road'
+						When 'S' then 'Other Sales'
+						When 'T' then 'Touring'
+						Else 'n/a'
+					End as prd_line, --Map product lines code to descriptive values(data Normalizations)
+					cast(prd_start_dt as date) as prd_start_dt, --DataType casting
+					DATEADD(DAY, -1, 
+					LEAD(prd_start_dt) OVER(PARTITION BY prd_key ORDER BY prd_start_dt)
+					) AS prd_end_dt --To rebuild the end date & delete the end date column (End Date = Start date of the next Records-1) Data Enrichment
+				From bronze.crm_prd_info 
+					SET @end_time = GETDATE();
+				Print '>> Load Duration: ' + Cast(DATEDIFF (Second, @start_time, @end_time) AS NVARCHAR) + ' seconds';
+				Print '-----------------';
+
+				-- bronze.crm_sales_details(Data Transformations)  & Insert Into Silver Layer'
+				SET @start_time = GETDATE();
+				Print '>> Truncating Table: silver.crm_sales_details'
+				TRUNCATE TABLE silver.crm_sales_details;
+				PRINT '>> Inserting Data Into: silver.crm_sales_details';
+				Insert Into silver.crm_sales_details(
+					sls_ord_num,
+					sls_prd_key,
+					sls_cust_id,
+					sls_order_dt,
+					sls_ship_dt,
+					sls_due_dt,
+					sls_sales,
+					sls_quantity,
+					sls_price
+				) -- After cleaned all cloumn data issue in bronze layer now we upload into silver layer
+				Select
+					sls_ord_num,
+					sls_prd_key,
+					sls_cust_id,
+					CASE --To handle Invalid date & cast int datatype into date datatype
+						WHEN sls_order_dt = 0 or LEN(sls_order_dt) != 8 then NULL
+						ELSE Cast(Cast(sls_order_dt as varchar) as DATE)
+					END as sls_order_dt,
+					CASE
+						WHEN sls_ship_dt = 0 or LEN(sls_ship_dt) != 8 then NULL
+						ELSE Cast(Cast(sls_ship_dt as varchar) as DATE)
+					END as sls_ship_dt,
+					CASE
+						WHEN sls_due_dt = 0 or LEN(sls_due_dt) != 8 then NULL
+						ELSE Cast(Cast(sls_due_dt as varchar) as DATE)
+					END as sls_due_dt,
+
+					-- To handle missing data, invalid data, derived column
+					CASE 
+					WHEN sls_sales IS NULL or sls_sales <= 0 or sls_sales != sls_quantity*abs(sls_price) then sls_quantity * ABS(sls_price)
+					Else sls_sales
+				End as sls_sales,
+				sls_quantity,
+				CASE 
+					WHEN sls_price IS NULL or sls_price <= 0 then sls_sales/ NULLIF(sls_quantity,0)
+					Else sls_price
+				End as sls_price
+				From bronze.crm_sales_details
+				SET @end_time = GETDATE();
+				Print '>> Load Duration: ' + Cast(DATEDIFF (Second, @start_time, @end_time) AS NVARCHAR) + ' seconds';
+				Print '-----------------';
+
+				-- bronze.erp_cust_az12 Data Transformations Process & Insert Into Silver Layer'
+				SET @start_time = GETDATE();
+				Print '>> Truncating Table: silver.erp_cust_az12'
+				TRUNCATE TABLE silver.erp_cust_az12;
+				PRINT '>> Inserting Data Into: silver.erp_cust_az12';
+				Insert Into silver.erp_cust_az12(
+					cid,
+					bdate,
+					gen
+				)
+				Select 
+					CASE
+						WHEN cid LIKE 'NAS%' then SUBSTRING(cid, 4, len(cid))
+						ELSE cid
+					END AS cid, --Remove 'NAN' Prefix if present
+	
+					Case 
+						When bdate > getdate() then NULL
+						Else bdate
+					End AS bdate, -- see Future birthdate to Null
+	
+					 Case
+						When Upper(Trim(gen)) In ('F', 'Female') Then 'Female'
+						When Upper(Trim(gen)) In ('M', 'Male') Then 'Male'
+						Else 'n/a'
+					End AS gen --Normalize Gender values and handle unknown case
+				From bronze.erp_cust_az12
+				SET @end_time = GETDATE();
+				Print '>> Load Duration: ' + Cast(DATEDIFF (Second, @start_time, @end_time) AS NVARCHAR) + ' seconds';
+				Print '-----------------';
+
+				-- bronze.erp_loc_a101 Data Transformations Process & Insert Into Silver Layer'
+				SET @start_time = GETDATE();
+				Print '>> Truncating Table: silver.erp_loc_a101'
+				TRUNCATE TABLE silver.erp_loc_a101;
+				PRINT '>> Inserting Data Into: silver.erp_loc_a101';
+				Insert Into silver.erp_loc_a101(
+					cid,
+					cntry
+				)
+				Select 
+					Replace(cid, '-', '') cid,
+					Case
+						When Upper(Trim(cntry)) in ('USA', 'US') then 'United States'
+						When Upper(Trim(cntry)) = 'DE' then 'Germany'
+						When Trim(cntry) = '' or Trim(cntry) IS NULL then 'n/a'
+						Else cntry
+					End cntry -- Normalize and Handle Missing or blank Country codes
+				From bronze.erp_loc_a101
+				SET @end_time = GETDATE();
+				Print '>> Load Duration: ' + Cast(DATEDIFF (Second, @start_time, @end_time) AS NVARCHAR) + ' seconds';
+				Print '-----------------';
+			
+
+				-- bronze.erp_px_cat_g1v2 (Data Transformations Process & Insert Into Silver Layer)
+				SET @start_time = GETDATE();
+				Print '>> Truncating Table: silver.erp_px_cat_g1v2'
+				TRUNCATE TABLE silver.erp_px_cat_g1v2;
+				PRINT '>> Inserting Data Into: silver.erp_px_cat_g1v2';
+				Insert Into silver.erp_px_cat_g1v2(
+					cid,
+					cat,
+					subcat,
+					maintenance
+				)
+				Select 
+					cid,
+					cat,
+					subcat,
+					maintenance
+				 From bronze.erp_px_cat_g1v2
+				SET @end_time = GETDATE();
+				Print '>> Load Duration: ' + Cast(DATEDIFF (Second, @start_time, @end_time) AS NVARCHAR) + ' seconds';
+				Print '-----------------';
+		
+		
+				SET @batch_end_Time = GETDATE();
+				Print '================================================================';
+				Print 'Loading Silver Layer is complted';
+				Print '- Total Load Duration: ' + Cast(DATEDIFF (Second, @batch_start_Time, @batch_end_Time) AS NVARCHAR) + ' seconds';
+				Print '================================================================';
+
+			END TRY 
+			BEGIN CATCH
+					Print '================================================================';
+					Print 'ERROR OCCURED DURING LOADING BRONZE LAYER';
+					Print 'Error Message' + Error_Message();
+					Print 'Error Message' + CAST (Error_Number() as NVARCHAR);
+					Print 'Error Message' + CAST (Error_STATE() as NVARCHAR);
+					PRINT '================================================================';
+			END CATCH
+END
+
+--=========================================
+		
+EXEC Silver.load_silver
+
 
