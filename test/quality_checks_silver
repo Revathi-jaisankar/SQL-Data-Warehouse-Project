@@ -1,0 +1,291 @@
+/*
+===================================================================
+Quality Check
+====================================================================
+Script Purpose:
+This Scripts performs various quality checks for data consistency, accuracy, and stadardization across the 'silver' schemas. It includes for:
+      -Null or Duplicates Primary keys
+      -unwanted Spaces in string fields.
+      -Data Standarization and consistency
+      -Invalid Data ranges and orders.
+      -Data consistency between related fields.
+Usage Notes:
+      -Run These Checks after data loading silver layer.
+      -Investigate and resolve any discrepancies found during the checks.
+=======================================================================
+*/
+
+-- ===========================================================================================
+-- 1.Check 'silver.crm_cust_info'
+ ===========================================================================================
+
+-- 1. Check For NUlls or Duplicates in Primary Key
+-- Expectations: NO Result
+
+Select 
+cst_id,
+COUNT(*) 
+From silver.crm_cust_info
+Group by cst_id
+Having COUNT(*) > 1 or cst_id IS NULL;
+
+====================================
+
+--2. Check for unwanted Spaces (Leading or Tailing spaces)
+-- Expectations: NO Result
+Select
+cst_firstname
+From silver.crm_cust_info
+where cst_firstname != Trim(cst_firstname)
+
+Select
+cst_lastname
+From silver.crm_cust_info
+where cst_lastname != Trim(cst_lastname)
+
+
+Select
+cst_gndr
+From silver.crm_cust_info
+where cst_gndr != Trim(cst_gndr)
+
+Select
+cst_gndr
+From silver.crm_cust_info
+where cst_marital_status != Trim(cst_marital_status)
+
+==================================
+
+--3.Data Standardization & Data Consistency
+-- Expectations: NO Result
+Select 
+	DISTINCT cst_gndr
+From silver.crm_cust_info
+
+Select 
+	DISTINCT cst_marital_status
+From silver.crm_cust_info
+
+=================================
+
+Select 
+	*
+From silver.crm_cust_info
+
+
+-- ===========================================================================================
+-- 2. Check: 'silver.crm_prd_info'
+-- ===========================================================================================
+-- 1. Check For NUlls or Duplicates in Primary Key
+-- Expectations: NO Result
+
+Select 
+prd_id,
+COUNT(*) 
+From silver.crm_prd_info
+Group by prd_id
+Having COUNT(*) > 1 or prd_id IS NULL; -- To check the duplicates or null in the pk cplimn of CRM product table
+
+--2.Check for Unwanted Spaces
+-- Expectation: No results
+
+Select prd_nm
+From silver.crm_prd_info
+where prd_nm != Trim (prd_nm)
+
+--3.check for NUll or negative Numbers
+-- Expectations: No results
+
+Select prd_cost
+from silver.crm_prd_info
+where prd_cost < 0 or prd_cost IS NULL
+
+
+--4.Data Standardization & Consistency
+-- Expectations: No results
+
+Select 
+	DISTINCT prd_line
+From silver.crm_prd_info
+
+--5.Check for Invalid Date others
+-- Expectations: No results
+Select 
+	*
+From silver.crm_prd_info
+where prd_end_dt < prd_start_dt
+
+-- ===========================================================================================
+--3. check: 'silver.crm_sales_info'
+-- ===========================================================================================
+
+--1. Check for Unwanted Spaces
+-- Expectation: No results
+Select
+	sls_ord_num
+From silver.crm_sales_details
+where sls_ord_num != trim(sls_ord_num)
+
+
+Select
+	sls_ord_num,
+	sls_prd_key
+From silver.crm_sales_details
+where sls_prd_key NOT IN ( select prd_key from silver.crm.prd_info) 
+
+
+Select
+	sls_ord_num,
+	sls_cust_id
+From silver.crm_sales_details
+where sls_cust_id NOT IN ( select cust_id from silver.crm.cust_info);
+-- we are not getting any issues that means all the product id is connected to silver.crm.prd_info
+
+
+-- To convert the Date column int data type into date datatype before you have to check any negative in this column
+-- Negative numbers or zeros cant be cast to a date
+--Productures
+-- step 1: 
+Select
+sls_order_dt
+From silver.crm_sales_details
+where sls_order_dt <= 0;
+
+-- step 2:
+Select
+NULLIF(sls_order_dt, 0) sls_order_dt
+From silver.crm_sales_details
+where sls_order_dt <= 0
+
+-- step 3: In the scenario, the length of the date must be 8
+
+Select
+NULLIF(sls_order_dt, 0) sls_order_dt
+From silver.crm_sales_details
+where sls_order_dt <= 0 or LEN(sls_order_dt) != 8
+
+-- Step 4: To check for outliers by validating the boundaries of the data range
+
+Select
+NULLIF(sls_order_dt, 0) sls_order_dt
+From silver.crm_sales_details
+where sls_order_dt >20500101 or sls_order_dt < 19000101 --outside boundary
+
+======================
+-- Check for INvalid dates
+Select
+NULLIF(sls_order_dt, 0) sls_order_dt
+From silver.crm_sales_details
+where sls_order_dt <= 0 or LEN(sls_order_dt) != 8 or sls_order_dt >20500101 or sls_order_dt < 19000101
+	
+Select
+NULLIF(sls_ship_dt, 0) sls_ship_dt
+From silver.crm_sales_details
+where sls_ship_dt <= 0 or LEN(sls_ship_dt) != 8 or sls_ship_dt >20500101 or sls_ship_dt < 19000101
+
+Select
+NULLIF(sls_due_dt, 0) sls_due_dt
+From silver.crm_sales_details
+where sls_due_dt <= 0 or LEN(sls_due_dt) != 8 or sls_due_dt >20500101 or sls_due_dt < 19000101
+
+===================
+--To check Invalid order order(Order Date Must always be earlier than the shipping date or Due Date)
+
+Select
+*
+From silver.crm_sales_details
+where sls_order_dt > sls_ship_dt or sls_order_dt > sls_due_dt
+
+=================
+-- Check Data Consistency: Between Sales, Quantity, and Price
+-- Business Rules Sales = quality* Price (negative, zeros, nulls are not allowed)
+
+select Distinct
+	sls_sales,
+	sls_quantity,
+	sls_price
+From silver.crm_sales_details
+where sls_sales != sls_quantity * sls_price 
+Or sls_sales Is NULL or sls_quantity Is NULL or sls_price IS NULL
+Or sls_sales <= 0 or sls_quantity <= 0 or sls_price <= 0 
+order by sls_sales , sls_quantity, sls_price
+
+
+select Distinct
+CASE 
+	WHEN sls_sales IS NULL or sls_sales <= 0 or sls_sales != sls_quantity*abs(sls_price) then sls_quantity * ABS(sls_price)
+	Else sls_sales
+End as sls_sales,
+sls_quantity,
+CASE 
+	WHEN sls_price IS NULL or sls_price <= 0 then sls_sales/ NULLIF(sls_quantity,0)
+	Else sls_price
+End as sls_price
+From silver.crm_sales_details
+
+-- ===========================================================================================
+--4. Check 'erp_cust_az12'
+-- ===========================================================================================
+
+-- 1. To check after cleaned Cid id is present in connection table (1stcolumn)
+
+Select 
+	CASE
+		WHEN cid LIKE 'NAS%' then SUBSTRING(cid, 4, len(cid))
+		ELSE cid
+	END cid,
+	bdate,
+	gen
+From silver.erp_cust_az12
+where CASE
+		WHEN cid LIKE 'NAS%' then SUBSTRING(cid, 4, len(cid))
+		ELSE cid
+	END NOT In (select distinct cst_id from silver.crm_cust_info);
+
+
+--2.To check data type(String, Int) & its already date Data type no isse & To check Indentify out-pf -ranges DOB
+
+Select Distinct
+bdate
+From silver.erp_cust_az12
+where bdate < '1924-01-01' or bdate > getdate();--check for very old data & check for future data
+
+--3. To check Data Standardization & consistency
+select 
+	 Distinct gen	
+From silver.erp_cust_az12;
+
+select * From silver.erp_cust_az12;
+
+-- ===========================================================================================
+-- 5.check: 'erp_loc_a101'
+-- ===========================================================================================
+
+--1. To check Data Standardization & consistency
+
+Select 
+	Distinct cntry
+From silver.erp_loc_a101
+
+select * From silver.erp_loc_a101
+
+-- ===========================================================================================
+--6. check: 'silver.erp_px_cat_g1v2'
+-- ===========================================================================================
+
+--1. To check Unwanted Spaces
+Select 
+	*
+From silver.erp_px_cat_g1v2
+where cat != Trim(cat) or subcat != Trim(subcat) or maintenance != Trim(maintenance)
+
+=============================================
+--2. Data Standardization & consistency
+
+Select 	Distinct cat From silver.erp_px_cat_g1v2
+
+Select Distinct subcat From silver.erp_px_cat_g1v2
+
+Select Distinct maintenance From silver.erp_px_cat_g1v2
+
+=================================
