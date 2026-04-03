@@ -69,3 +69,4 @@ The Gold Layer is the business-level data representation, structured to support 
   - `fact_sales`  
 
 This structure enables **efficient reporting, analytics, and business decision-making**.
+
