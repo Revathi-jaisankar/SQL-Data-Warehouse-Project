@@ -106,6 +106,7 @@ This project is licensed under the [MIT License](LICENSE). You are free to use, 
 ## 🌟 About Me
 
 Hi there! I'm **Revathi Ganesan**. I’m an Data Analyst and passionate about data on a mission to share knowledge and make working with data enjoyable and engaging!
+Connect with me on **[LinkedIn](https://www.linkedin.com/in/revathi-ganesan-576a37121/)**
 
 
 
