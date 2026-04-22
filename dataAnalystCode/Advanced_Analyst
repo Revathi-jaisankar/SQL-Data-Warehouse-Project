@@ -1,0 +1,284 @@
+/*==============================================
+This project focused on advanced analytics to generate insights through Change over Time (YoY, MoM), Cumulative Analysis, Performance Analysis, Data segmentation
+and Part-to-Whole Analysis.
+
+================================================================================================*/
+
+
+use DataWarehouse
+
+--1.Change Over Time (Analyze Sales Performance Over Time)
+
+--High Level Reporting
+Select
+year(order_date) as Order_Year,
+sum(sales_amount) as Total_sales,
+count(Distinct customer_key) as Total_customer,
+sum(quantity) as Total_quantity
+From gold.fact_sales
+where order_date IS NOT NULL
+Group by year(order_date)
+order by year(order_date) Asc
+
+--Month Level change over time (detailed Insight to discover seasonality in your data)
+Select
+Month(order_date) as Order_Month,
+sum(sales_amount) as Total_sales,
+count(Distinct customer_key) as Total_customer,
+sum(quantity) as Total_quantity
+From gold.fact_sales
+where order_date IS NOT NULL
+Group by Month(order_date)
+order by Month(order_date) Asc
+
+---------------------
+Select
+year(order_date) as Order_Year,
+Month(order_date) as Order_Month,
+sum(sales_amount) as Total_sales,
+count(Distinct customer_key) as Total_customer,
+sum(quantity) as Total_quantity
+From gold.fact_sales
+where order_date IS NOT NULL
+Group by Month(order_date), year(order_date)
+order by Month(order_date), year(order_date) Asc
+
+------------------
+
+Select
+DATETRUNC(month, order_date) as Order_Month, --Monthwise aggregate
+sum(sales_amount) as Total_sales,
+count(Distinct customer_key) as Total_customer,
+sum(quantity) as Total_quantity
+From gold.fact_sales
+where order_date IS NOT NULL
+Group by DATETRUNC(month, order_date)
+order by DATETRUNC(month, order_date) Asc
+
+Select
+DATETRUNC(YEAR, order_date) as Order_Year, --Yearwise aggregate
+sum(sales_amount) as Total_sales,
+count(Distinct customer_key) as Total_customer,
+sum(quantity) as Total_quantity
+From gold.fact_sales
+where order_date IS NOT NULL
+Group by DATETRUNC(YEAR, order_date)
+order by DATETRUNC(YEAR, order_date) Asc
+
+--------------
+--Using Specific format
+
+Select
+FORMAT(order_date, 'yyyy-MMM') as Order_Year, --Yearwise aggregate
+sum(sales_amount) as Total_sales,
+count(Distinct customer_key) as Total_customer,
+sum(quantity) as Total_quantity
+From gold.fact_sales
+where order_date IS NOT NULL
+Group by FORMAT(order_date, 'yyyy-MMM') 
+order by FORMAT(order_date, 'yyyy-MMM')  Asc
+
+=================================================================================
+-- Culmulative Analysis
+=================================================================================
+--Calculate the total sales per month and the running total of sales over Time
+
+Select 
+
+	Order_Month,
+	Total_sales,
+	sum(Total_sales) over(order by Order_Month) as running_total_sales
+	
+From(
+Select
+DATETRUNC(MONTH, order_date) as Order_Month, --Yearwise aggregate
+sum(sales_amount) as Total_sales
+From gold.fact_sales
+where order_date IS NOT NULL
+Group by DATETRUNC(MONTH, order_date)
+)t
+
+Select 
+
+	Order_Month,
+	Total_sales,
+	avg(Total_sales) over(order by Order_Month) as moving_avg
+From(
+Select
+DATETRUNC(MONTH, order_date) as Order_Month, --Yearwise aggregate
+avg(sales_amount) as Total_sales
+From gold.fact_sales
+where order_date IS NOT NULL
+Group by DATETRUNC(MONTH, order_date)
+)t
+
+==============================================
+--Performance Analysis
+
+--Analyze the yearly Performance of products by comparing each products sales to both its average sales performance and the previous years sales.
+
+---YOY Analysis
+
+with Current_year_sales as (
+
+	select 
+		year(f.order_date) as Order_Year,
+		p.product_name as Product_name,
+		sum(f.sales_amount) as Current_year_Totalsales
+	From gold.fact_sales f
+	left Join gold.dim_products p
+		on f.product_key = p.prd_key
+	where f.order_date Is NOT NULL
+	group by year(f.order_date), p.product_name
+	
+)
+Select
+	*,
+	Avg(Current_year_Totalsales) Over(Partition by Product_name) as Avg_sales,
+	Current_year_Totalsales- Avg(Current_year_Totalsales) Over(Partition by Product_name) as diff_avg,
+
+	Case
+		when Current_year_Totalsales - Avg(Current_year_Totalsales) Over(Partition by Product_name) > 0 then 'Above Average'
+		when Current_year_Totalsales - Avg(Current_year_Totalsales) Over(Partition by Product_name) < 0 then 'Below Average'
+		Else 'Avg'
+	End Avg_change,
+lag(Current_year_Totalsales) over(partition by Product_name order by Order_Year) as PreviousYear_sales,
+Current_year_Totalsales - lag(Current_year_Totalsales) over(partition by Product_name order by Order_Year) as Diff_Py,
+Case
+		when Current_year_Totalsales - lag(Current_year_Totalsales) over(partition by Product_name order by Order_Year) > 0 then 'Increase'
+		when Current_year_Totalsales - lag(Current_year_Totalsales) over(partition by Product_name order by Order_Year) < 0 then 'decrease'
+		Else 'No Change'
+	End PY_change
+From Current_year_sales
+order by  Product_name, Order_Year
+
+
+
+-----------MOM Analysis-----------------
+
+with Current_Month_sales as (
+	select 
+		DATETRUNC(Month, f.order_date) as Order_Month,
+		p.product_name as Product_name,
+		sum(f.sales_amount) as Current_Month_Totalsales
+	From gold.fact_sales f
+	left Join gold.dim_products p
+		on f.product_key = p.prd_key
+	where f.order_date Is NOT NULL
+	group by DATETRUNC(Month, f.order_date), p.product_name
+	
+)
+Select
+	Order_Month,
+	Product_name,
+	Current_Month_Totalsales,
+	Avg(Current_Month_Totalsales) Over(Partition by Product_name) as Avg_sales,
+	Current_Month_Totalsales- Avg(Current_Month_Totalsales) Over(Partition by Product_name) as diff_avg,
+
+	Case
+		when Current_Month_Totalsales - Avg(Current_Month_Totalsales) Over(Partition by Product_name) > 0 then 'Above Average'
+		when Current_Month_Totalsales - Avg(Current_Month_Totalsales) Over(Partition by Product_name) < 0 then 'Below Average'
+		Else 'Avg'
+	End Avg_change,
+lag(Current_Month_Totalsales) over(partition by Product_name order by Order_Month) as PreviousYear_sales,
+Current_Month_Totalsales - lag(Current_Month_Totalsales) over(partition by Product_name order by Order_Month) as Diff_Py,
+Case
+		when Current_Month_Totalsales - lag(Current_Month_Totalsales) over(partition by Product_name order by Order_Month) > 0 then 'Increase'
+		when Current_Month_Totalsales - lag(Current_Month_Totalsales) over(partition by Product_name order by Order_Month) < 0 then 'decrease'
+		Else 'No Change'
+	End PY_change
+From Current_Month_sales
+order by  Product_name, Order_Month
+
+=================================
+--Part-to-whole Analysis
+
+Which categories Contribute the most to overall sales
+
+With category_sales As(
+select 
+p.category as category,
+sum(f.sales_amount) as Total_sales
+from gold.fact_sales f
+left join gold.dim_products p
+	on f.product_key = p.prd_key
+Group by p.category
+)
+select 
+*,
+sum(Total_sales) over() as whole_sales,
+concat(Round( (cast(Total_sales as float) /sum(Total_sales) over()) * 100, 2), '%') as pert_contribution
+From category_sales
+order by pert_contribution desc
+
+-----------------------
+-- Data segmentation
+-------------------------------
+
+/*segment Products into cost ranges 
+and count how many products fall into each segment.*/
+
+WITH segment_analysis AS(
+select
+Product_name,
+cost,
+CASE 
+	WHEN cost < 100 THEN 'BELOW 100'
+	WHEN COST BETWEEN 100 AND 500 THEN '100-500'
+	WHEN COST BETWEEN 500 AND 1000 THEN '500-1000'
+	ELSE 'ABOVE 1000'
+END Cost_range
+from gold.dim_products 
+)
+Select
+	Cost_range,
+	count(*) as Total_count
+From segment_analysis
+Group by Cost_range
+order by Total_count desc
+
+/*
+	Group customer into three segments based on thier spending behavior :
+	-VIP: Customers with at least 12 months of history and spending more than euro 5000.
+	-Regular: Customer With atlest 12 months  of history but spending 5000 or less.
+	-New: Customer with a lifespan less than 12 months.
+and Find the total number of customer by each group 
+*/
+with customer_segment as (
+Select
+	c.customer_key as customer_key,
+	sum(f.sales_amount) as Customer_spending,
+	min(order_date) as First_order,
+	min(order_date) as last_order,
+	DATEDIFF(month, min(order_date), min(order_date)) as Lifespan
+From gold.fact_sales f
+left join gold.dim_Customers c
+	on f.Customer_key = c.Customer_key
+Group by c.customer_key
+)
+select 
+	Lifespan_segment,
+	count(customer_key) as Total_customer
+From (
+	select
+		customer_key,
+		Customer_spending,
+		Lifespan,
+		CASE
+			WHEN Customer_spending > 5000 AND Lifespan >= 12 THEN 'vip'
+			WHEN Customer_spending < 5000 AND Lifespan >= 12 THEN 'REGULAR' 
+			Else 'NEW'
+		END Lifespan_segment
+	from customer_segment
+)t
+Group by Lifespan_segment
+
+
+
+
+
+select * from gold.fact_sales
+
+select * from gold.dim_products
+
+select * from  gold.dim_Customers
