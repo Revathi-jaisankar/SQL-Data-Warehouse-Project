@@ -1,0 +1,119 @@
+Use DataWarehouse
+/*
+============================================================================
+Product Report
+============================================================================
+Purpose
+	-The report consolidates key Product metrics and behaviors
+
+Highlights:
+
+1.Gathers essential fields such as Product names, category, subcategory, and cost.
+2.segment customers by revenue to identify High-Performers, Mid-Range, or Low-Performers.
+3.Aggregates Product-level metrics:
+	-total order
+	-total sales
+	-total quantity sold
+	- total (unique Customer)
+	-lifespan (in month)
+4. calculate valuable KPIs:
+
+	-recency(months since last order)
+	-average order value (AOR)
+	-average monthly revenue
+
+=================================================================================
+*/
+
+
+-- Put it into view to access all members to generate the insights
+
+Create view gold.report_Products  As 
+with base_query as (
+/*------------------------------------------------------------------------------
+1) Base Query: Retrieves core columns from tables
+--------------------------------------------------------------------------------*/
+Select
+	f.order_number,
+	f.Customer_key,
+	f.order_date,
+	f.quantity,
+	f.sales_amount,
+	p.prd_key,
+	p.product_name,
+	p.category,
+	p.subcategory,
+	p.cost
+FRom gold.fact_sales f
+Left JOin gold.dim_products p
+	on f.Product_key = p.prd_key
+where f.order_date is NOT NUll
+)
+, Product_aggregations as (
+/*------------------------------------------------------------------------------
+1) Products Aggregations: Summarizes key matrics at the Products level
+--------------------------------------------------------------------------------*/
+select 
+	prd_key,
+	product_name,
+	category,
+	subcategory,
+	cost,
+	DATEDIFF(month, MIN(order_date), MAX(order_date)) as Lifespan,
+	MAX(order_date) as Last_order_date,
+	count(distinct order_number) as Total_order,
+	count(distinct Customer_key) as Total_customers,
+	sum(sales_amount) as Total_sales,
+	sum(quantity) as Total_quantity,
+	round(avg(cast(sales_amount as float) / NULLIF(quantity, 0)),1) as avg_selling_prize	
+From base_query
+Group by 
+	prd_key,
+	product_name,
+	category,
+	subcategory,
+	cost
+)
+select
+	prd_key,
+	product_name,
+	category,
+	subcategory,
+	cost,
+	Case
+		when Total_sales > 50000  then 'High_performers'
+		when Total_sales >= 10000 then 'Mid-Range'
+		Else 'Low-Performers'
+	End as products_segment,
+	Total_order,
+	Total_sales,
+	Total_quantity,
+	Total_customers,
+	Last_order_date,
+	avg_selling_prize,
+	Lifespan,
+	--compuate Average order amount(AVO)(check any zeros are there are not)
+	case 
+		when Total_order = 0 then 0
+		else Total_sales/Total_order
+	End as Avg_order_value,
+	-- Compuate Avergae monthly revenue
+		case 
+		when Lifespan = 0 then Total_sales
+		else Total_sales/Lifespan
+	End as Avg_monthly_spend 
+	
+from Product_aggregations
+
+
+----------------
+--After created Customer Table now we can analyze more infromation of customer
+
+Select * From gold.report_Products
+
+
+Select 
+product_name,
+sum(total_sales) total_sales
+From gold.report_Products
+group by product_name
