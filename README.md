@@ -72,6 +72,10 @@ Develop SQL-based analytics to deliver detailed insights into:
 
 These insights empower stakeholders with key business metrics, enabling strategic decision-making.  
 
+### Analytics & Reporting (Data Analysis)
+
+Designed and implemented a Medallion Architecture-based data pipeline to perform ETL processes, delivering business-ready data for exploratory and advanced analytics, and created actionable customer and product performance reports.
+
 ## 📂 Repository Structure
 ```
 data-warehouse-project/
